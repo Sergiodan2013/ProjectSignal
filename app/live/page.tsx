@@ -1,5 +1,6 @@
 "use client";
 
+import "./live.css";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ExternalLink, RefreshCw, Radar, AlertTriangle, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
