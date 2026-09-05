@@ -18,10 +18,10 @@ const defaultProfile:Analysis={company:"Systemair",hostname:"systemair.com",sour
 
 export default function LivePage(){
  const [items,setItems]=useState<Item[]>([]); const [sources,setSources]=useState<Source[]>([]); const [loading,setLoading]=useState(true); const [error,setError]=useState(""); const [stamp,setStamp]=useState("");
- const [website,setWebsite]=useState("https://www.systemair.com"); const [profile,setProfile]=useState<Analysis>(defaultProfile); const [analyzing,setAnalyzing]=useState(false); const [profileError,setProfileError]=useState("");
+ const [website,setWebsite]=useState("https://www.systemair.com"); const [profile,setProfile]=useState<Analysis>(defaultProfile); const [analyzing,setAnalyzing]=useState(false); const [profileError,setProfileError]=useState(""); const [booted,setBooted]=useState(false);
 
- useEffect(()=>{try{const saved=localStorage.getItem("projectsignal-profile");if(saved){const p=JSON.parse(saved);setProfile(p);setWebsite(`https://${p.hostname}`)}}catch{}},[]);
- useEffect(()=>{load(profile)},[profile]);
+ useEffect(()=>{(async()=>{let found:Analysis|null=null;try{const r=await fetch("/api/analyze",{cache:"no-store"});const d=await r.json();if(d?.profile)found=d.profile}catch{}if(!found){try{const saved=localStorage.getItem("projectsignal-profile");if(saved)found=JSON.parse(saved)}catch{}}if(found){setProfile(found);setWebsite(`https://${found.hostname}`);try{localStorage.setItem("projectsignal-profile",JSON.stringify(found))}catch{}}setBooted(true)})()},[]);
+ useEffect(()=>{if(booted)load(profile)},[profile,booted]);
 
  async function analyzeCompany(){
   setAnalyzing(true);setProfileError("");
@@ -57,6 +57,6 @@ export default function LivePage(){
    <div className="tableWrap"><table><thead><tr><th>Fit</th><th>Opportunity</th><th>Matched products</th><th>Stage</th><th>Authority / buyer</th><th>Source</th></tr></thead><tbody>{items.map(x=><tr key={x.id}><td><span className="score">{x.customerScore}</span></td><td><b>{x.title}</b><span>{x.why}</span></td><td>{x.matchedProducts?.length?x.matchedProducts.slice(0,2).join(" · "):"No explicit product text"}</td><td><span className={`stage stage-${x.stage}`}>{x.stage}</span></td><td><b>{x.buyer}</b><span>{x.published?(()=>{const d=new Date(x.published);return Number.isNaN(d.getTime())?x.published:d.toLocaleDateString()})():"Date unavailable"}</span></td><td><a href={x.href} target="_blank" rel="noreferrer" className="sourceLink">{x.source} <ExternalLink size={13}/></a></td></tr>)}</tbody></table></div>}
   </section>
 
-  <section className="liveNote"><Building2 size={20}/><div><b>What changed in this version</b><p>The feed is no longer ranked only by generic HVAC relevance. Every record now receives a second score based on the active company portfolio. A ventilation manufacturer and a heat-pump manufacturer can therefore see different priorities from the same public source stream.</p></div></section>
+  <section className="liveNote"><Building2 size={20}/><div><b>What changed in this version</b><p>The feed is no longer ranked only by generic HVAC relevance. Every record receives a customer-specific score based on the active Market Profile, which is persisted across the main demo and the live feed. A ventilation manufacturer and a heat-pump manufacturer therefore see different priorities from the same public data.</p></div></section>
  </main>
 }
