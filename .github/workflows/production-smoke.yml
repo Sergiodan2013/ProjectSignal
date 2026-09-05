@@ -1,0 +1,23 @@
+name: Production smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Vercel production deployment
+        run: sleep 45
+      - name: Check homepage
+        run: curl --retry 3 --retry-delay 5 -fsS https://project-signal-tau.vercel.app/ -o /tmp/home.html
+      - name: Check live opportunity API
+        run: |
+          curl --retry 3 --retry-delay 5 -fsS "https://project-signal-tau.vercel.app/api/live-projects?company=Systemair&products=Air%20handling%20units%7CCommercial%20ventilation%7CHeat%20recovery&countries=NL%7CBE" -o /tmp/live.json
+          node -e 'const x=require("/tmp/live.json"); if(!x.ok||!Array.isArray(x.items)) throw new Error("live API invalid"); console.log(`live items=${x.items.length}, sources=${x.sources?.filter(s=>s.ok).length||0}`)'
+      - name: Check account enrichment API
+        run: |
+          curl --retry 3 --retry-delay 5 -fsS "https://project-signal-tau.vercel.app/api/enrich-account?company=Arcadis&country=NL" -o /tmp/enrich.json
+          node -e 'const x=require("/tmp/enrich.json"); if(!x.ok) throw new Error("enrichment API invalid"); console.log(`website=${x.website||"none"}, people=${x.people?.length||0}, mentions=${x.mentions?.length||0}`)'
