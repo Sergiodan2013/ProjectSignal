@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const HVAC_TERMS = [
   "hvac","ventilat","luchtbehandeling","warmtepomp","koeling","klimaat","installatietechniek",
@@ -14,17 +14,21 @@ const BUILDING_TERMS = [
 
 const EARLY_TERMS = ["aanvraag","aangevraagd","vergunning","omgevingsvergunning","stedenbouw","ontwerp","nieuwbouw","uitbreiding","verbouwing","renovatie"];
 
-function pick(obj:any, keys:string[]) {
-  for (const k of keys) if (obj?.[k] !== undefined && obj?.[k] !== null) return obj[k];
-  return undefined;
-}
-function textOf(v:any):string {
-  if (v == null) return "";
-  if (typeof v === "string" || typeof v === "number") return String(v);
-  if (Array.isArray(v)) return v.map(textOf).join(" ");
-  if (typeof v === "object") return Object.values(v).map(textOf).join(" ");
-  return "";
-}
+const PRODUCT_TERMS: Record<string,string[]> = {
+  "Air handling units":["air handling","ahu","luchtbehandel","luchtbehandeling","luchtbehandelingskast"],
+  "Commercial ventilation":["ventilat","luchtververs","mechanische ventilatie","afzuig","luchttoevoer"],
+  "Heat recovery":["heat recovery","warmteterugwinning","wtw","energy recovery","warmtewisselaar"],
+  "Fire & smoke ventilation":["rookbeheers","rookventilat","smoke control","brandventilat","brandklep","rookklep"],
+  "Heat pumps":["warmtepomp","heat pump","all-electric","wko","bodemenergie"],
+  "Chillers":["chiller","koelmachine","koelinstallatie","comfortkoeling","centrale koeling"],
+  "VRF / VRV":["vrf","vrv","variable refrigerant","direct expansion","dx systeem"],
+  "Controls / BMS":["bms","gebouwbeheer","regeltechniek","building management","building automation","meet- en regeltechniek"],
+  "Air distribution":["luchtverdeling","air distribution","rooster","diffuser","luchtkanaal","kanalenwerk"],
+  "Commercial building systems":["installatietechniek","gebouwinstallat","technische installatie","werktuigbouw"]
+};
+
+function pick(obj:any, keys:string[]) { for (const k of keys) if (obj?.[k] !== undefined && obj?.[k] !== null) return obj[k]; }
+function textOf(v:any):string { if (v == null) return ""; if (typeof v === "string" || typeof v === "number") return String(v); if (Array.isArray(v)) return v.map(textOf).join(" "); if (typeof v === "object") return Object.values(v).map(textOf).join(" "); return ""; }
 function decodeXml(s:string){return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&amp;/g,"&").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim()}
 function tag(xml:string,names:string[]){for(const name of names){const m=xml.match(new RegExp(`<[^>]*${name}[^>]*>([\\s\\S]*?)<\\/[^>]*${name}>`,`i`));if(m?.[1])return decodeXml(m[1])}return ""}
 
@@ -38,6 +42,18 @@ function score(hay:string, stage:"permit"|"planning"|"procurement") {
   return {relevance,hvacHits,buildingHits,earlyHits};
 }
 
+function profileFit(hay:string, products:string[], base:number, stage:string){
+  const l=hay.toLowerCase();
+  const matchedProducts=products.filter(p=>(PRODUCT_TERMS[p]||[p.toLowerCase()]).some(t=>l.includes(t.toLowerCase())));
+  const productSignalHits=matchedProducts.reduce((n,p)=>n+(PRODUCT_TERMS[p]||[]).filter(t=>l.includes(t.toLowerCase())).length,0);
+  const stageWeight=stage==="planning"?9:stage==="permit"?6:0;
+  const customerScore=Math.min(99,Math.round(base + matchedProducts.length*7 + Math.min(productSignalHits,5)*2 + stageWeight));
+  const why=matchedProducts.length
+    ? `${matchedProducts.slice(0,3).join(" · ")} matched in project text${stage!=="procurement"?" · early-stage influence window":""}`
+    : `${stage==="planning"||stage==="permit"?"Early-stage building signal":"Building/procurement signal"} · portfolio match not explicit in source text`;
+  return {customerScore,matchedProducts,why};
+}
+
 function normalizeTender(n:any, idx:number) {
   const hay=textOf(n); const s=score(hay,"procurement");
   const id=pick(n,["publicatieId","id","publicationId","uuid"])??`tn-${idx}`;
@@ -45,38 +61,38 @@ function normalizeTender(n:any, idx:number) {
   const published=pick(n,["publicatieDatum","publicationDate","datumPublicatie","date","verzenddatum"]);
   const buyer=pick(n,["aanbestedendeDienst","buyer","organisatie","contractingAuthority","organisatieNaam"]);
   const noticeType=pick(n,["publicatieType","noticeType","type","aankondigingType"]);
-  return {id:`tn-${id}`,title:textOf(title).slice(0,220),published:published?String(published):null,buyer:textOf(buyer).slice(0,180)||"Public buyer",noticeType:textOf(noticeType).slice(0,120)||"Public notice",source:"TenderNed",country:"NL",stage:"procurement",...s,href:`https://www.tenderned.nl/aankondigingen/overzicht/${id}`,live:true};
+  return {id:`tn-${id}`,title:textOf(title).slice(0,220),published:published?String(published):null,buyer:textOf(buyer).slice(0,180)||"Public buyer",noticeType:textOf(noticeType).slice(0,120)||"Public notice",source:"TenderNed",country:"NL",stage:"procurement",...s,hay:hay.slice(0,12000),href:`https://www.tenderned.nl/aankondigingen/overzicht/${id}`,live:true};
 }
 
 async function tenderNed(){
   const endpoints=["https://www.tenderned.nl/papi/tenderned-rs-tns/v2/publicaties?page=0&size=100","https://www.tenderned.nl/papi/tenderned-rs-tns/publicaties?page=0&size=100"];
   let err="";
-  for(const url of endpoints){try{const r=await fetch(url,{headers:{accept:"application/json","user-agent":"ProjectSignal/0.5"},next:{revalidate:900}});if(!r.ok){err=`${r.status} ${r.statusText}`;continue}const data=await r.json();const arr=Array.isArray(data)?data:(data?.content??data?.publicaties??data?.items??data?.results??[]);return arr.map(normalizeTender).filter((x:any)=>x.hvacHits>0||x.buildingHits>0).slice(0,80)}catch(e:any){err=e?.message||String(e)}}
+  for(const url of endpoints){try{const r=await fetch(url,{headers:{accept:"application/json","user-agent":"ProjectSignal/0.6"},next:{revalidate:900}});if(!r.ok){err=`${r.status} ${r.statusText}`;continue}const data=await r.json();const arr=Array.isArray(data)?data:(data?.content??data?.publicaties??data?.items??data?.results??[]);return arr.map(normalizeTender).filter((x:any)=>x.hvacHits>0||x.buildingHits>0).slice(0,80)}catch(e:any){err=e?.message||String(e)}}
   throw new Error(err||"TenderNed unavailable");
 }
 
 async function nlPermits(){
   const params=new URLSearchParams({version:"1.2",operation:"searchRetrieve","x-connection":"oep",startRecord:"1",maximumRecords:"100",query:'(title=omgevingsvergunning or keyword="omgevingsvergunning")'});
   const url=`https://zoek.officielebekendmakingen.nl/sru/Search?${params.toString()}`;
-  const r=await fetch(url,{headers:{accept:"application/xml,text/xml","user-agent":"ProjectSignal/0.5"},next:{revalidate:1800}});
+  const r=await fetch(url,{headers:{accept:"application/xml,text/xml","user-agent":"ProjectSignal/0.6"},next:{revalidate:1800}});
   if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   const xml=await r.text();
   const recs=[...xml.matchAll(/<[^>]*recordData[^>]*>([\s\S]*?)<\/[^>]*recordData>/gi)].map(m=>m[1]);
   return recs.map((rec,i)=>{
-    const title=tag(rec,["title"] )||"Omgevingsvergunning";
+    const title=tag(rec,["title"])||"Omgevingsvergunning";
     const desc=tag(rec,["description","abstract","subject"]);
     const buyer=tag(rec,["creator","publisher","authority"])||"Dutch public authority";
     const published=tag(rec,["date","issued","available"])||null;
     const identifier=tag(rec,["identifier"]);
     const spatial=tag(rec,["spatial","coverage"]);
     const hay=`${title} ${desc} ${buyer} ${spatial}`; const s=score(hay,"permit");
-    return {id:`nlp-${identifier||i}`,title:title.slice(0,220),published,buyer:buyer.slice(0,180),noticeType:"Omgevingsvergunning",source:"NL Official Publications",country:"NL",stage:"permit",...s,href:identifier?.startsWith("http")?identifier:`https://zoek.officielebekendmakingen.nl/`,live:true};
+    return {id:`nlp-${identifier||i}`,title:title.slice(0,220),published,buyer:buyer.slice(0,180),noticeType:"Omgevingsvergunning",source:"NL Official Publications",country:"NL",stage:"permit",...s,hay,href:identifier?.startsWith("http")?identifier:"https://zoek.officielebekendmakingen.nl/",live:true};
   }).filter((x:any)=>x.buildingHits>0||x.hvacHits>0||x.earlyHits>1).slice(0,80);
 }
 
 async function flandersPlanning(){
   const base="https://www.mercator.vlaanderen.be/raadpleegdienstenmercatorpubliek/ogc/features/v1";
-  const cr=await fetch(`${base}/collections?f=json`,{headers:{accept:"application/json","user-agent":"ProjectSignal/0.5"},next:{revalidate:86400}});
+  const cr=await fetch(`${base}/collections?f=json`,{headers:{accept:"application/json","user-agent":"ProjectSignal/0.6"},next:{revalidate:86400}});
   if(!cr.ok) throw new Error(`${cr.status} ${cr.statusText}`);
   const cj=await cr.json();
   const collections=(cj?.collections??[]).filter((c:any)=>/omgevingsvergunning|stedenbouw|radar/i.test(`${c?.id||""} ${c?.title||""} ${c?.description||""}`)).slice(0,4);
@@ -84,7 +100,7 @@ async function flandersPlanning(){
   const all:any[]=[];
   for(const c of collections){
     try{
-      const ir=await fetch(`${base}/collections/${encodeURIComponent(c.id)}/items?f=json&limit=100`,{headers:{accept:"application/geo+json,application/json","user-agent":"ProjectSignal/0.5"},next:{revalidate:1800}});
+      const ir=await fetch(`${base}/collections/${encodeURIComponent(c.id)}/items?f=json&limit=100`,{headers:{accept:"application/geo+json,application/json","user-agent":"ProjectSignal/0.6"},next:{revalidate:1800}});
       if(!ir.ok) continue; const ij=await ir.json();
       for(const f of (ij?.features??[])){
         const p=f?.properties??{}; const hay=textOf(p); const s=score(hay,"planning");
@@ -93,7 +109,7 @@ async function flandersPlanning(){
         const title=pick(p,["projectnaam","onderwerp","omschrijving","title","naam"])??c.title??"Vlaamse omgevingsvergunning";
         const published=pick(p,["indieningsdatum","datum","publicatiedatum","beslissingsdatum","created"]);
         const buyer=pick(p,["vergunningverlenendeoverheid","bevoegdeoverheid","gemeente","organisatie","creator"])??"Vlaamse overheid / lokaal bestuur";
-        all.push({id:`be-${id}`,title:textOf(title).slice(0,220),published:published?String(published):null,buyer:textOf(buyer).slice(0,180),noticeType:textOf(pick(p,["procedure","type","projecttype"])??"Omgevingsvergunning").slice(0,120),source:"Vlaanderen RADAr / Geopunt",country:"BE",stage:"planning",...s,href:"https://www.geopunt.be/kaart",live:true});
+        all.push({id:`be-${id}`,title:textOf(title).slice(0,220),published:published?String(published):null,buyer:textOf(buyer).slice(0,180),noticeType:textOf(pick(p,["procedure","type","projecttype"])??"Omgevingsvergunning").slice(0,120),source:"Vlaanderen RADAr / Geopunt",country:"BE",stage:"planning",...s,hay:hay.slice(0,12000),href:"https://www.geopunt.be/kaart",live:true});
       }
     }catch{}
   }
@@ -104,10 +120,14 @@ function dedupe(items:any[]){
   const seen=new Map<string,any>();
   const norm=(s:string)=>s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g," ").trim().slice(0,120);
   for(const x of items){const key=`${x.country}|${norm(x.title)}|${norm(x.buyer).slice(0,45)}`;const prev=seen.get(key);if(!prev||x.relevance>prev.relevance)seen.set(key,x)}
-  return [...seen.values()].sort((a,b)=>b.relevance-a.relevance);
+  return [...seen.values()];
 }
 
-export async function GET(){
+export async function GET(req:NextRequest){
+  const products=(req.nextUrl.searchParams.get("products")||"").split("|").map(x=>x.trim()).filter(Boolean).slice(0,10);
+  const countries=(req.nextUrl.searchParams.get("countries")||"NL|BE").split("|").map(x=>x.trim().toUpperCase()).filter(Boolean);
+  const company=(req.nextUrl.searchParams.get("company")||"").slice(0,80);
+
   const sources=[
     {name:"TenderNed",fn:tenderNed},
     {name:"NL Official Publications / Permits",fn:nlPermits},
@@ -115,7 +135,12 @@ export async function GET(){
   ];
   const results=await Promise.allSettled(sources.map(s=>s.fn()));
   const status=results.map((r,i)=>({source:sources[i].name,ok:r.status==="fulfilled",count:r.status==="fulfilled"?r.value.length:0,error:r.status==="rejected"?String(r.reason?.message||r.reason):null}));
-  const items=dedupe(results.flatMap(r=>r.status==="fulfilled"?r.value:[])).slice(0,160);
+  let items=dedupe(results.flatMap(r=>r.status==="fulfilled"?r.value:[])).filter((x:any)=>countries.includes(x.country));
+  items=items.map((x:any)=>{
+    const fit=profileFit(`${x.hay||""} ${x.title} ${x.buyer} ${x.noticeType}`,products,x.relevance,x.stage);
+    const {hay,...clean}=x;
+    return {...clean,...fit};
+  }).sort((a:any,b:any)=>(b.customerScore??b.relevance)-(a.customerScore??a.relevance)).slice(0,160);
   const anyOk=status.some(s=>s.ok);
-  return NextResponse.json({ok:anyOk,fetchedAt:new Date().toISOString(),count:items.length,sources:status,items},{status:anyOk?200:502});
+  return NextResponse.json({ok:anyOk,fetchedAt:new Date().toISOString(),count:items.length,sources:status,profile:{company,products,countries},items},{status:anyOk?200:502});
 }
