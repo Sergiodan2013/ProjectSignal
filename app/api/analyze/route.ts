@@ -42,6 +42,13 @@ const presets: Record<string, Category[]> = {
   ],
 };
 
+const brandNames: Record<string,string> = {
+  "systemair.com":"Systemair",
+  "renson.net":"Renson",
+  "zehnder.nl":"Zehnder",
+  "daikin.be":"Daikin",
+};
+
 function normalizeUrl(raw: string) {
   const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
   const url = new URL(withProtocol);
@@ -51,7 +58,16 @@ function normalizeUrl(raw: string) {
   return url;
 }
 function hostKey(hostname: string) { const host = hostname.replace(/^www\./, "").toLowerCase(); return Object.keys(presets).find(k => host === k || host.endsWith(`.${k}`)); }
-function companyFrom(hostname: string, title?: string) { if (title) { const clean = title.split(/[|–—-]/)[0].trim(); if (clean.length > 2 && clean.length < 50) return clean; } const base = hostname.replace(/^www\./, "").split(".")[0]; return base.charAt(0).toUpperCase() + base.slice(1); }
+function companyFrom(hostname: string, title?: string, presetKey?: string) {
+  if (presetKey && brandNames[presetKey]) return brandNames[presetKey];
+  const generic=/^(b2b|b2c|home|homepage|welcome|products|solutions|professional|business|consumer)$/i;
+  if (title) {
+    const clean = title.split(/[|–—-]/)[0].trim();
+    if (clean.length > 2 && clean.length < 50 && !generic.test(clean)) return clean;
+  }
+  const base = hostname.replace(/^www\./, "").split(".")[0];
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
 function detect(text: string): Category[] { const lower = text.toLowerCase(); return taxonomy.map(t => { const hits = t.keys.reduce((n, key) => n + (lower.includes(key) ? 1 : 0), 0); return hits ? { name: t.name, applications: t.applications, confidence: Math.min(99, 70 + hits * 9) } : null; }).filter(Boolean) as Category[]; }
 function saveProfile(response:NextResponse, profile:Profile){ response.cookies.set("projectsignal_profile",encodeURIComponent(JSON.stringify(profile)),{httpOnly:true,sameSite:"lax",secure:true,maxAge:60*60*24*30,path:"/"}); return response; }
 
@@ -81,7 +97,7 @@ export async function POST(req: NextRequest) {
     if (categories.length < 2 && presetKey) { categories = presets[presetKey]; source = "curated-fallback"; }
     if (!categories.length) { categories = [{ name: "Commercial building systems", applications: "Commercial and public projects", confidence: 68 }]; source = "curated-fallback"; }
     const applications = Array.from(new Set(categories.flatMap(c => c.applications.split(" · "))));
-    const profile:Profile={company:companyFrom(url.hostname,title),hostname:url.hostname.replace(/^www\./,""),source,categories:categories.slice(0,6),idealProjects:applications.slice(0,8),analyzedAt:new Date().toISOString()};
+    const profile:Profile={company:companyFrom(url.hostname,title,presetKey),hostname:url.hostname.replace(/^www\./,""),source,categories:categories.slice(0,6),idealProjects:applications.slice(0,8),analyzedAt:new Date().toISOString()};
     return saveProfile(NextResponse.json(profile),profile);
   } catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "Analysis failed" }, { status: 400 }); }
 }
