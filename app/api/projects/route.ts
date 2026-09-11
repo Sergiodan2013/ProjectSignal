@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { GET as getLiveProjectSignals } from '../live-projects/route';
 import { buildProjects, type LiveSignal } from '../../../lib/project-entity';
 import { persistProjects } from '../../../lib/project-persistence';
 
@@ -8,14 +9,12 @@ export async function GET(req:NextRequest){
   const company=(req.nextUrl.searchParams.get('company')||'').slice(0,80);
   const products=(req.nextUrl.searchParams.get('products')||'').slice(0,600);
   const countries=(req.nextUrl.searchParams.get('countries')||'NL|BE').slice(0,40);
-  const qs=new URLSearchParams({company,products,countries});
 
   try{
-    const liveUrl=new URL(`/api/live-projects?${qs.toString()}`,req.url);
-    const r=await fetch(liveUrl,{cache:'no-store',headers:{accept:'application/json'}});
-    const data=await r.json();
-    if(!r.ok||!data?.ok){
-      return NextResponse.json({ok:false,error:data?.error||'Live signal layer unavailable',sources:data?.sources||[]},{status:r.status||502});
+    const liveResponse=await getLiveProjectSignals(req);
+    const data=await liveResponse.json();
+    if(!liveResponse.ok||!data?.ok){
+      return NextResponse.json({ok:false,error:data?.error||'Live signal layer unavailable',sources:data?.sources||[]},{status:liveResponse.status||502});
     }
     const signals=(Array.isArray(data.items)?data.items:[]) as LiveSignal[];
     const projects=buildProjects(signals);
