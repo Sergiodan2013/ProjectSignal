@@ -12,11 +12,11 @@ jobs:
       - name: Wait for Vercel production deployment
         run: sleep 45
       - name: Check homepage
-        run: curl --retry 3 --retry-delay 5 -fsS https://project-signal-tau.vercel.app/ -o /tmp/home.html
-      - name: Check live opportunity API
+        run: curl --retry 4 --retry-delay 8 -fsS https://project-signal-tau.vercel.app/ -o /tmp/home.html
+      - name: Check canonical project API
         run: |
-          curl --retry 3 --retry-delay 5 -fsS "https://project-signal-tau.vercel.app/api/live-projects?company=Systemair&products=Air%20handling%20units%7CCommercial%20ventilation%7CHeat%20recovery&countries=NL%7CBE" -o /tmp/live.json
-          node -e 'const x=require("/tmp/live.json"); if(!x.ok||!Array.isArray(x.items)) throw new Error("live API invalid"); console.log(`live items=${x.items.length}, sources=${x.sources?.filter(s=>s.ok).length||0}`)'
+          curl --retry 4 --retry-delay 8 -fsS "https://project-signal-tau.vercel.app/api/projects?company=Systemair&products=Air%20handling%20units%7CCommercial%20ventilation%7CHeat%20recovery&countries=NL%7CBE" -o /tmp/projects.json
+          node -e 'const x=require("/tmp/projects.json"); if(!x.ok||!Array.isArray(x.projects)) throw new Error("project API invalid"); if(typeof x.rawSignalCount!=="number"||typeof x.projectCount!=="number") throw new Error("project metrics missing"); console.log(`projects=${x.projectCount}, rawSignals=${x.rawSignalCount}, multiSignal=${x.multiSignalProjectCount||0}`)'
       - name: Check account enrichment API
         run: |
           curl --retry 3 --retry-delay 5 -fsS "https://project-signal-tau.vercel.app/api/enrich-account?company=Arcadis&country=NL" -o /tmp/enrich.json
